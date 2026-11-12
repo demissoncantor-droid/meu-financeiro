@@ -1,4 +1,4 @@
--- Meu Controle Financeiro: tabela e funções (cole tudo no SQL Editor do Supabase e clique em Run)
+
 
 create table if not exists public.registros (
   familia   text        not null,
