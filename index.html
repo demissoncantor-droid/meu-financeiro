@@ -254,8 +254,7 @@ const getCode=()=>{try{return localStorage.getItem(CODE_KEY)}catch(e){return nul
 const cfgOk=()=>!!window.APP_CONFIG&&!/^COLE/.test(window.APP_CONFIG.supabaseUrl||'')&&!/^COLE/.test(window.APP_CONFIG.supabaseKey||'');
 function connectSupabase(code){
  const cfg=window.APP_CONFIG,base=cfg.supabaseUrl.replace(/\/+$/,'')+'/rest/v1/rpc/';
- const hdr={'apikey':cfg.supabaseKey,'Content-Type':'application/json'};
- if(/^eyJ/.test(cfg.supabaseKey))hdr.Authorization='Bearer '+cfg.supabaseKey;
+ const hdr={'apikey':cfg.supabaseKey,'Authorization':'Bearer '+cfg.supabaseKey,'Content-Type':'application/json'};
  const rpc=async(fn,body)=>{
   let r;try{r=await fetch(base+fn,{method:'POST',headers:hdr,body:JSON.stringify(body)})}catch(e){throw{code:'unavailable',message:String(e)}}
   const t=await r.text();if(!r.ok)throw{code:'unavailable',message:t};return t?JSON.parse(t):null};
