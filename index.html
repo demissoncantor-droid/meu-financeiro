@@ -151,7 +151,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 @keyframes fade{from{opacity:0}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script><script src="firebase-config.js"></script>
+<script src="config.js"></script>
 <style>html{padding-top:env(safe-area-inset-top,0px)}</style>
 </head><body>
 <div id="app"></div>
@@ -245,40 +245,63 @@ function tryStart(){
   try{if(COLS.some(c=>S[c].length))localStorage.setItem(KEY+'-backup',JSON.stringify(S))}catch(e){}
   synced=true;COLS.forEach(c=>reconcile(c,stash[c]));
   try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
+  syncPush(); // envia ao Supabase registros locais que ainda não existem na nuvem
  }
  setSync('ok');
 }
 const CODE_KEY='mcf-codigo';
 const getCode=()=>{try{return localStorage.getItem(CODE_KEY)}catch(e){return null}};
-const cfgOk=()=>typeof firebase!=='undefined'&&!!window.FIREBASE_CONFIG&&!/^COLE/.test(window.FIREBASE_CONFIG.apiKey||'');
-let fb=null;
-async function connectFirebase(code){
- if(!fb){firebase.initializeApp(window.FIREBASE_CONFIG);fb={auth:firebase.auth(),fs:firebase.firestore()}}
- const u=await new Promise(r=>{const off=fb.auth.onAuthStateChanged(x=>{off();r(x)})});
- if(!u)await fb.auth.signInAnonymously();
- const base=fb.fs.collection('familias').doc(code);
- return {collection:c=>base.collection(c)};
+const cfgOk=()=>!!window.APP_CONFIG&&!/^COLE/.test(window.APP_CONFIG.supabaseUrl||'')&&!/^COLE/.test(window.APP_CONFIG.supabaseKey||'');
+function connectSupabase(code){
+ const cfg=window.APP_CONFIG,base=cfg.supabaseUrl.replace(/\/+$/,'')+'/rest/v1/rpc/';
+ const hdr={'apikey':cfg.supabaseKey,'Content-Type':'application/json'};
+ if(/^eyJ/.test(cfg.supabaseKey))hdr.Authorization='Bearer '+cfg.supabaseKey;
+ const rpc=async(fn,body)=>{
+  let r;try{r=await fetch(base+fn,{method:'POST',headers:hdr,body:JSON.stringify(body)})}catch(e){throw{code:'unavailable',message:String(e)}}
+  const t=await r.text();if(!r.ok)throw{code:'unavailable',message:t};return t?JSON.parse(t):null};
+ let pending=0,epoch=0,started=false;const ls=[],last={};
+ const write=async(fn,body)=>{pending++;epoch++;try{return await rpc(fn,body)}finally{pending--;epoch++}};
+ async function poll(){
+  if(pending||document.hidden)return;const e0=epoch;let rows;
+  try{rows=await rpc('listar_registros',{p_familia:code})}catch(e){ls.forEach(l=>l.err&&l.err(e));return}
+  if(pending||epoch!==e0)return;
+  const by={};rows.forEach(r=>(by[r.colecao]=by[r.colecao]||[]).push(r));
+  for(const l of ls){
+   const list=(by[l.col]||[]).filter(r=>!l.id||r.id===l.id),k=l.col+'/'+(l.id||''),j=ser(list.map(r=>[r.id,r.dados]));
+   if(last[k]===j&&l.seen)continue;last[k]=j;l.seen=true;
+   l.cb(l.id?{exists:list.length>0,metadata:{fromCache:false}}:{docs:list.map(r=>({id:r.id,data:()=>r.dados})),metadata:{fromCache:false}});
+  }
+ }
+ const start=()=>{if(started)return;started=true;setTimeout(poll,0);setInterval(poll,6000);
+  document.addEventListener('visibilitychange',poll);addEventListener('online',poll);addEventListener('focus',poll)};
+ const sub=(col,id)=>(cb,err)=>{ls.push({col,id,cb,err});start()};
+ return {collection:c=>({
+  onSnapshot:sub(c,null),
+  doc:id=>({
+   onSnapshot:sub(c,id),
+   set:d=>write('salvar_registro',{p_familia:code,p_colecao:c,p_id:id,p_dados:d}),
+   delete:()=>write('apagar_registro',{p_familia:code,p_colecao:c,p_id:id})
+  })})};
 }
 function showLogin(msg){
  const w=$('#login');w.hidden=false;document.body.classList.add('lock');
- w.innerHTML=`<form class="login" novalidate><img src="icon.svg" width="76" height="76" alt="" class="logo"><h1>Meu Controle Financeiro</h1><p>Digite o <b>código da família</b>. Use o mesmo código no celular da sua esposa para os dois verem os mesmos dados.</p><label class="field"><span>Código (4 a 8 números)</span><input id="codigo" type="text" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Ex.: 482913"></label><p class="err" id="lerr" role="alert">${esc(msg||'')}</p><button class="btn primary" type="submit">Entrar</button><p class="lbl" style="text-align:center;margin:0">Quanto mais longo o código, mais seguro. Na primeira vez, ele cria o espaço de vocês.</p><button class="btn ghost" type="button" data-local>Usar só neste aparelho</button></form>`;
+ w.innerHTML=`<form class="login" novalidate><img src="icon.svg" width="76" height="76" alt="" class="logo"><h1>Meu Controle Financeiro</h1><p>Digite o <b>código da família</b>. Use o mesmo código no celular da sua esposa para os dois verem os mesmos dados.</p><label class="field"><span>Código (4 a 12 números)</span><input id="codigo" type="text" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="Ex.: 48291375"></label><p class="err" id="lerr" role="alert">${esc(msg||'')}</p><button class="btn primary" type="submit">Entrar</button><p class="lbl" style="text-align:center;margin:0">Use o mesmo código em todos os aparelhos. Na primeira vez, ele cria o espaço da família.</p></form>`;
  const f=w.querySelector('form');
  f.onsubmit=e=>{e.preventDefault();const c=f.querySelector('#codigo').value.trim();
-  if(!/^\d{4,8}$/.test(c)){w.querySelector('#lerr').textContent='Digite de 4 a 8 números.';return}
+  if(!/^\d{4,12}$/.test(c)){w.querySelector('#lerr').textContent='Digite de 4 a 12 números.';return}
   try{localStorage.setItem(CODE_KEY,c)}catch(x){}
   w.hidden=true;w.innerHTML='';document.body.classList.remove('lock');initSync()};
- f.querySelector('[data-local]').onclick=()=>{try{localStorage.setItem(CODE_KEY,'local')}catch(x){}w.hidden=true;w.innerHTML='';document.body.classList.remove('lock');render()};
 }
 async function initSync(){
  let db=null;
  if(cfgOk()){
   const code=getCode();
-  if(code==='local')return;
-  if(!code){showLogin();return}
+  if(!code||code==='local'){showLogin();return}
   setSync('connecting');
-  try{db=await connectFirebase(code)}catch(e){setSync('error');return}
+  try{db=connectSupabase(code)}catch(e){setSync('error');return}
  }else{
-  try{db=window.claude&&window.claude.use?await window.claude.use('db'):null}catch(e){db=null}
+  setSync('error');
+  return;
  }
  if(!db)return;
  DB=db;setSync('connecting');
