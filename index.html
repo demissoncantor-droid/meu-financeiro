@@ -207,20 +207,20 @@ function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){canSave
 const COLS=['entradas','saidas','cats','cartoes','reserva','filhos','objetivos'];
 const ser=v=>JSON.stringify(v,(k,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.keys(x).sort().reduce((a,y)=>(a[y]=x[y],a),{}):x);
 const clone=o=>JSON.parse(JSON.stringify(o));
-let DB=null,synced=false,syncState='local',shadow={},chain={},stash={},got=new Set(),metaExists=null,rq=0;
+let DB=null,synced=false,syncState='local',syncDetail='',shadow={},chain={},stash={},got=new Set(),metaExists=null,rq=0;
 COLS.forEach(c=>shadow[c]={});
-function setSync(st){syncState=st;if(!rq)rq=requestAnimationFrame(()=>{rq=0;render()})}
+function setSync(st,detail=''){syncState=st;syncDetail=detail?String(detail).replace(/\s+/g,' ').slice(0,220):'';if(!rq)rq=requestAnimationFrame(()=>{rq=0;render()})}
 function lazyRender(){if(!rq)rq=requestAnimationFrame(()=>{rq=0;render()})}
 function writeDoc(c,rec,json){
  const k=c+'/'+rec.id;
- chain[k]=(chain[k]||Promise.resolve()).then(()=>DB.collection(c).doc(rec.id).set(JSON.parse(json))).catch(e=>{delete shadow[c][rec.id];setSync(e&&e.code==='invalid_argument'?'readonly':'error')});
+ chain[k]=(chain[k]||Promise.resolve()).then(()=>DB.collection(c).doc(rec.id).set(JSON.parse(json))).catch(e=>{delete shadow[c][rec.id];setSync(e&&e.code==='invalid_argument'?'readonly':'error',e&&e.message)});
 }
 function syncPush(){
  if(!DB||!synced)return;
  for(const c of COLS){
   const ids=new Set();
   for(const rec of S[c]){ids.add(rec.id);const j=ser(rec);if(shadow[c][rec.id]!==j){shadow[c][rec.id]=j;writeDoc(c,rec,j)}}
-  for(const id of Object.keys(shadow[c]))if(!ids.has(id)){delete shadow[c][id];const k=c+'/'+id;chain[k]=(chain[k]||Promise.resolve()).then(()=>DB.collection(c).doc(id).delete()).catch(e=>setSync(e&&e.code==='invalid_argument'?'readonly':'error'))}
+  for(const id of Object.keys(shadow[c]))if(!ids.has(id)){delete shadow[c][id];const k=c+'/'+id;chain[k]=(chain[k]||Promise.resolve()).then(()=>DB.collection(c).doc(id).delete()).catch(e=>setSync(e&&e.code==='invalid_argument'?'readonly':'error',e&&e.message))}
  }
 }
 function reconcile(c,docs){
@@ -304,7 +304,7 @@ async function initSync(){
  }
  if(!db)return;
  DB=db;setSync('connecting');
- const fail=()=>{if(!synced)setSync('offline')};
+ const fail=e=>{if(!synced)setSync('offline',e&&e.message?e.message:'O Supabase não respondeu. Verifique a conexão e as configurações.')};
  const t=setTimeout(fail,10000);
  try{
   db.collection('meta').doc('init').onSnapshot(sn=>{if(sn.metadata.fromCache&&!sn.exists)return;metaExists=sn.exists;clearTimeout(t);tryStart()},fail);
@@ -325,7 +325,7 @@ function totals(){
  return {ent,sai,res,fil,saldo,livre:r2(saldo-res-fil)};
 }
 const SYNC={local:['','Só neste aparelho'],connecting:['','Conectando…'],ok:['ok','Sincronizado'],offline:['','Sem conexão: salvando só neste aparelho'],readonly:['bad','Sem permissão para salvar'],error:['bad','Erro ao sincronizar']};
-const syncPill=()=>`<p class="sync"><i class="dot" style="background:${syncState==='ok'?'var(--in)':SYNC[syncState][0]==='bad'?'var(--out)':'var(--muted)'}"></i>${SYNC[syncState][1]}</p>`;
+const syncPill=()=>`<p class="sync" style="display:block"><span><i class="dot" style="background:${syncState==='ok'?'var(--in)':SYNC[syncState][0]==='bad'?'var(--out)':'var(--muted)'}"></i>${SYNC[syncState][1]}</span>${syncDetail?`<small style="display:block;margin:5px 0 0 17px;font-weight:500;white-space:normal;overflow-wrap:anywhere">Detalhe: ${esc(syncDetail)}</small>`:''}</p>`;
 const catNome=id=>(S.cats.find(c=>c.id===id)||{}).nome||'Sem categoria';
 const COLORS=['#0e6b5c','#3b5bdb','#c2410c','#7c3aed','#0891b2','#b45309','#be185d'];
 const GRAD=[['#10705f','#0a3a33'],['#3f56d6','#1b2470'],['#c2552f','#6e2412'],['#7447b3','#35195f'],['#323847','#12141a']];
